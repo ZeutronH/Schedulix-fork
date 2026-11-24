@@ -1,0 +1,75 @@
+services:
+  db:
+    image: postgres:17
+    container_name: schedulix_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: schedulix
+      POSTGRES_USER: schedulix
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-schedulix_dev}
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U schedulix -d schedulix"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: schedulix_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  backend:
+    build: ./backend
+    container_name: schedulix_backend
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - schedulix_media:/app/media
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  worker:
+    build: ./backend
+    container_name: schedulix_worker
+    command: celery -A app.tasks.celery_app worker --loglevel=info
+    env_file:
+      - .env
+    volumes:
+      - ./backend:/app
+      - schedulix_media:/app/media
+    depends_on:
+      - backend
+      - redis
+
+  frontend:
+    build: ./frontend
+    container_name: schedulix_frontend
+    environment:
+      - VITE_BACKEND_URL=http://backend:8000
+    ports:
+      - "5173:5173"
+      - "5174:5174"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
+  redis_data:
+  schedulix_media:
